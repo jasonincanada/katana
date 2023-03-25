@@ -1,0 +1,22 @@
+2023/03/01 opening balances
+    assets:cash                  $50
+    assets:savings               $1000.00
+    equity:opening-balances
+
+2023/03/01 YouTube Premium
+    expenses:entertainment:youtube          $13.55
+    credit:visa                            $-13.55
+
+2023/03/03 AWS
+    expenses:internet:aws           $12.35
+    credit:visa
+
+2023/03/07 Payroll Deposit
+    assets:savings               $2000
+    income:payroll:workplace    $-2000
+
+2023/03/07 Sandwich, Chili
+    assets:savings                    $-14.99
+    expenses:tips                       $0.50
+    assets:cash                        $-0.50
+    expenses:food:tim-hortons
