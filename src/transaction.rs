@@ -1,15 +1,15 @@
 use lazy_static::lazy_static;
 use chrono::NaiveDate;
 use regex::Regex;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result};
 
-use crate::types::Account;
-use crate::journal::types::{Amount, Line}; // TODO
+use crate::types::{Account, Amount, AmountType, Units};
 
 
 /* Transaction */
 
-// A transaction is a collection of 1 or more entries whose total dollar amount is zero
+// a transaction is a collection of 2 or more entries whose total amount for each commodity is zero
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Transaction {
@@ -20,11 +20,20 @@ pub struct Transaction {
 
 impl Transaction {
 
-    pub fn total_cents(&self) -> i64 {
-        self.entries.iter()
-                    .map(|entry| entry.cents)
-                    .sum()
-    }
+    // get the total for each commodity (the different units) in this transaction
+    pub fn totals(&self) -> HashMap<Units, Amount> {
+        let mut map: HashMap<Units, Amount> = HashMap::new();
+
+        for entry in &self.entries {
+            if let Some(amount) = map.get_mut(&entry.amount.units) {
+                amount.add(&entry.amount);
+            } else {
+                map.insert(entry.amount.units.clone(),
+                           entry.amount.clone());
+            }
+        }
+        map
+    } 
 
     // start a (temporarily empty) transaction with this date and description
     pub fn parse_date_and_description(line: &str) -> Option<Transaction> {
@@ -55,7 +64,6 @@ impl Display for Transaction {
     }
 }
 
-// compile the date/description regex once per run of the program
 lazy_static! {
     static ref DATE_REGEX: Regex =
         Regex::new(r"^(?P<date>\d{4}/\d{2}/\d{2})\s+(?P<description>.+)$").unwrap();
@@ -67,24 +75,21 @@ lazy_static! {
 #[derive(Debug, PartialEq)]
 pub struct Entry {
     pub account: Account,
-    pub cents  : i64
-}
-
-impl Entry {
-    pub fn from_line(line: Line) -> Self {
-        Entry {
-            account: line.account,
-            cents  : match line.amount {
-                Amount::Cents(cents) => cents,
-                                   _ => panic!("Expected an Amount::Cents for line.amount") // TODO
-            }
-        }
-    }
+    pub amount : Amount
 }
 
 impl Display for Entry {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}    ${:.2}", self.account, self.cents as f64 / 100.0)
+
+        // TODO: units
+        match self.amount.amount {
+            AmountType::Discrete(cents, _) => {
+                write!(f, "{}    ${:.2}", self.account, cents as f64 / 100.0)
+            }
+            AmountType::Float(amt) => {
+                write!(f, "{}    {:.3}", self.account, amt)
+            }
+        }
     }
 }
 
@@ -94,11 +99,13 @@ impl Display for Entry {
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
+    use crate::types::{Amount, AmountType};
+
     use super::{Entry, Transaction};
 
     #[test]
     fn test_parse_transaction_from_date_and_description() {
-         let expected = 
+        let expected = 
             Some(Transaction {
                 date: NaiveDate::from_ymd_opt(2023, 03, 11).unwrap(),
                 description: "Meatball Sub".to_owned(),
@@ -115,7 +122,10 @@ mod tests {
     fn create_entry(account: &str, cents: i64) -> Entry {
         Entry {
             account: account.to_string(),
-            cents,
+            amount: Amount {
+                amount: AmountType::Discrete(cents, 2),
+                units: "$".to_owned()
+            }
         }
     }
 

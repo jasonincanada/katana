@@ -1,51 +1,18 @@
 /// Journal types
 
+use lazy_static::lazy_static;
 use std::str::FromStr;
+use regex::Regex;
+
 use crate::common::is_all_whitespace;
-use crate::types::Account;
+use crate::types::{Account, Amount, Units};
 
-
-/* Amount */
 
 // the two types of input on the right side of an entry line
 #[derive(Clone, Debug, PartialEq)]
-pub enum Amount { // TODO: rename to LineAmount
-    Cents(i64),
+pub enum LineAmount {
+    Amount(Amount),
     Blank
-}
-
-impl FromStr for Amount {
-    type Err = AmountParseErrors;
-
-    // parse("$1.25")  -> Amount::Cents(125)
-    // parse("$-1.25") -> Amount::Cents(-125)
-    // parse("")       -> Amount::Blank
-    // parse(" ")      -> Amount::Blank
-    fn from_str(amount: &str) -> Result<Self, Self::Err> {
-
-        if let Some(amount) = amount.strip_prefix('$') {
-            if let Ok(cents) = amount.parse::<f64>() {
-                return Ok(Amount::Cents((cents * 100.0).round() as i64))
-            }
-        }
-
-        if is_all_whitespace(amount) {
-            return Ok(Amount::Blank)
-        }
-
-        Err(AmountParseErrors::InvalidAmount)
-    }
-}
-
-impl Amount {
-    pub fn is_blank(&self) -> bool {
-        matches!(self, Amount::Blank)
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum AmountParseErrors {
-    InvalidAmount
 }
 
 
@@ -55,32 +22,90 @@ pub enum AmountParseErrors {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
     pub account: Account,
-    pub amount : Amount
+    pub amount : LineAmount
+}
+
+#[derive(Debug, PartialEq)]
+enum ParsedLine {
+    AccountWithAmount(Account, Units, f64),
+    AccountOnly(Account),
+    Invalid
+}
+
+lazy_static! {
+    static ref ACCOUNT_AND_AMOUNT_REGEX: Regex =
+        Regex::new(r"(?x)
+            (?P<account>[[:alnum:]:-]+)
+            (?:
+                \s\s+
+                (?P<units>[a-zA-Z\$]+)
+                \s*
+                (?P<amount>[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)
+              |
+                \s\s+
+                (?P<amount2>[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)
+                \s*
+                (?P<units2>[a-zA-Z\$]+)
+            )
+        ").unwrap();
+
+    static ref ACCOUNT_ONLY_REGEX: Regex = 
+        Regex::new(r"^\s*(?P<account>[[:alnum:]:-]+)\s*$").unwrap();
+}
+
+fn parse_account_and_amount(input: &str) -> ParsedLine {
+    if let Some(captures) = ACCOUNT_AND_AMOUNT_REGEX.captures(input) {
+        let account = captures.name("account").unwrap().as_str().to_string();
+        let units = captures.name("units").or_else(|| captures.name("units2")).unwrap().as_str().to_string();
+        let amount_str = captures.name("amount").or_else(|| captures.name("amount2")).unwrap().as_str();
+        let amount = f64::from_str(amount_str).unwrap();
+        ParsedLine::AccountWithAmount(account, units, amount)
+    } else if let Some(account) = parse_account_only(input) {
+        ParsedLine::AccountOnly(account)
+    } else {
+        ParsedLine::Invalid
+    }
+}
+
+fn parse_account_only(input: &str) -> Option<String> {
+    if let Some(captures) = ACCOUNT_ONLY_REGEX.captures(input) {
+        let account = captures.name("account").unwrap().as_str().to_string();
+        Some(account)
+    } else {
+        None
+    }
 }
 
 impl FromStr for Line {
     type Err = LineParseError;
 
+    // expenses:food:tim-hortons  $1.62
     fn from_str(line: &str) -> Result<Self, Self::Err> {
-        let mut parts = line.split_whitespace();
-
-        let account = parts.next()
-                           .ok_or(LineParseError::MissingAccount) ?
-                           .to_string();
-
-        let amount  = parts.next()
-                           .map_or(Ok(Amount::Blank), |part| {
-                               Amount::from_str(part).map_err(|_| LineParseError::InvalidAmount)
-                           })?;
-
-        Ok(Line { account, amount })
+        if is_all_whitespace(line) {
+            return Err(LineParseError::MissingAccount)
+        }
+        match parse_account_and_amount(line) {
+            ParsedLine::AccountWithAmount(account, units, amount) => {
+                Ok(Line {
+                    account,
+                    amount: LineAmount::Amount(Amount::from(units, amount))
+                })
+            },
+            ParsedLine::AccountOnly(account) => {
+                Ok(Line {
+                    account,
+                    amount: LineAmount::Blank
+                })
+            },
+            ParsedLine::Invalid => Err(LineParseError::Unknown),
+        }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum LineParseError {
     MissingAccount,
-    InvalidAmount,
+    Unknown,
 }
 
 
@@ -88,25 +113,9 @@ pub enum LineParseError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Amount, AmountParseErrors, FromStr, Line, LineParseError};
-
-    #[test] fn amount_parse_positive_amount()   { assert_eq!(Amount::from_str("$1.25"), Ok(Amount::Cents(125))); }
-    #[test] fn amount_parse_negative_amount()   { assert_eq!(Amount::from_str("$-1.25"), Ok(Amount::Cents(-125))); }
-    #[test] fn amount_parse_empty_string()      { assert_eq!(Amount::from_str(""), Ok(Amount::Blank)); }
-    #[test] fn amount_parse_whitespace_string() { assert_eq!(Amount::from_str(" "), Ok(Amount::Blank)); }
-    #[test] fn amount_parse_zero_amount()       { assert_eq!(Amount::from_str("$0.00"), Ok(Amount::Cents(0))); }
-    #[test] fn amount_parse_large_amount()      { assert_eq!(Amount::from_str("$12345.67"), Ok(Amount::Cents(1234567))); }
-
-    #[test]
-    fn amount_parse_invalid_string() {
-        assert_eq!(Amount::from_str("foo"), Err(AmountParseErrors::InvalidAmount));
-    }
-
-    #[test]
-    fn test_is_blank() {
-        assert!(Amount::Blank.is_blank());
-        assert!(!Amount::Cents(10).is_blank());
-    }
+    use crate::types::{Amount, AmountType};
+    use crate::journal::types::{parse_account_and_amount, ParsedLine, LineParseError};
+    use super::{LineAmount, FromStr, Line};
 
     #[test]
     fn test_parse_line() {
@@ -117,29 +126,91 @@ mod tests {
         // blank amount
         assert_eq!(Line::from_str("acct:sub-acct"),
                    Ok(Line { account: "acct:sub-acct".to_owned(),
-                             amount : Amount::Blank
+                             amount : LineAmount::Blank
                            }));
 
         assert_eq!(Line::from_str("acct:sub-acct "),
                    Ok(Line { account: "acct:sub-acct".to_owned(),
-                             amount : Amount::Blank
+                             amount : LineAmount::Blank
                            }));
 
         assert_eq!(Line::from_str("acct:sub-acct             "),
                    Ok(Line { account: "acct:sub-acct".to_owned(),
-                             amount : Amount::Blank
+                             amount : LineAmount::Blank
                            }));
 
         // an actual amount in dollars/cents
-        assert_eq!(Line::from_str("expenses:food:tim-hortons $-1.25"),
+        assert_eq!(Line::from_str("expenses:food:tim-hortons  $-1.25"),
                    Ok(Line { account: "expenses:food:tim-hortons".to_owned(),
-                             amount : Amount::Cents(-125)
-                           }));
+                             amount : LineAmount::Amount(Amount {
+                                    units : "$".to_owned(),
+                                    amount: AmountType::Discrete(-125, 2)
+                            })}));
 
-        // multiple spaces between the two sides
-        assert_eq!(Line::from_str("expenses:food:tim-hortons \t   $-1.25"),
+        // multiple whitespace between the two sides
+        assert_eq!(Line::from_str("expenses:food:tim-hortons  \t  $-1.25"),
                    Ok(Line { account: "expenses:food:tim-hortons".to_owned(),
-                             amount : Amount::Cents(-125)
-                           }));
+                             amount : LineAmount::Amount(Amount {
+                                    units : "$".to_owned(),
+                                    amount: AmountType::Discrete(-125, 2)
+                            })}));
+        
+
+        assert_eq!(Line::from_str("usage:power  \t  308 kWh"),
+                   Ok(Line { account: "usage:power".to_owned(),
+                             amount : LineAmount::Amount(Amount {
+                                    units:  "kWh".to_owned(),
+                                    amount: AmountType::Float(308.0)
+                            })}));
     }
+
+    #[test]
+    fn test_parse_account_amount() {
+        let input = "acc123  100.5USD";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::AccountWithAmount("acc123".to_owned(), "USD".to_owned(), 100.5));
+    }
+
+    #[test]
+    fn test_parse_account_amount_needs_two_spaces_after_account() {
+        let input = "acc123 100.5USD";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::Invalid);
+    }
+    
+    #[test]
+    fn test_parse_account_amount_dollar_sign_right() {
+        let input = "acc123  100.5$";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::AccountWithAmount("acc123".to_owned(), "$".to_owned(), 100.5));
+    }
+
+    #[test]
+    fn test_parse_account_amount_dollar_sign_left() {
+        let input = "acc123  $100.5";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::AccountWithAmount("acc123".to_owned(), "$".to_owned(), 100.5));
+    }
+
+    #[test]
+    fn test_parse_account_amount_dollar_sign_left_with_space() {
+        let input = "acc123  $ 100.5";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::AccountWithAmount("acc123".to_owned(), "$".to_owned(), 100.5));
+    }
+
+    #[test]
+    fn test_parse_account_amount_kwh() {
+        let input = "usage:power  308 kWh";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::AccountWithAmount("usage:power".to_owned(), "kWh".to_owned(), 308.0));
+    }
+
+    #[test]
+    fn test_parse_account_amount_kwh_hyphen() {
+        let input = "usage-power  kWh308";
+        let result = parse_account_and_amount(input);
+        assert_eq!(result, ParsedLine::AccountWithAmount("usage-power".to_owned(), "kWh".to_owned(), 308.0));
+    }
+
 }

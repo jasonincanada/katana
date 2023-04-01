@@ -1,17 +1,19 @@
 use chrono::NaiveDate;
-use std::fmt::{Display, Formatter, Result};
+use std::collections::HashMap;
+use std::fmt;
 use crate::transaction::Entry;
-use crate::types::Account;
+use crate::types::{Account, Amount, Units};
 use crate::journal::Journal;
 use crate::transaction::Transaction;
 
 
+// one line of the register report
 pub struct ReportLine<'a> {
     date         : Option<NaiveDate>,          // only render the first date and
     description  : Option<&'a String>,         // description per transaction
     account      : &'a String,
-    entry_cents  : i64,
-    running_total: i64,
+    amount       : String,
+    running_total: String,
 }
 
 // a mask on a transaction that selects only certain entries, references to which are
@@ -22,84 +24,104 @@ struct FilteredTransaction<'a> {
     entries    : Vec<&'a Entry>
 }
 
-// run a report that shows each debit or credit to a given account, one debit/credit per
-// line, and the running total on each line. only show the date/account once for a given
-// date/account and leave blanks for the other entries
+// Generates a register report for a given account, showing each debit or credit
+// transaction with a running total for each line. Displays the date and account
+// information only once for each date and account combination, leaving the others blank.
 pub fn register_report<'a>(journal: &'a Journal,
                            account: &'a Account) -> Vec<ReportLine<'a>>
 {
-    let mut fts: Vec<FilteredTransaction> = journal.transactions
-        .iter()
-        .filter_map(|transaction| filter_entries_for(transaction, account))
-        .collect();
-
+    let mut fts = filter_by_account(&journal.transactions, account);
+   
     // TODO: we can skip this step if we know the journal is already sorted by date
     fts.sort_by_key(|ft| ft.transaction.date);
     
     let mut report_lines: Vec<ReportLine> = vec![];
-    let mut running_total: i64 = 0;
+    let mut running_totals: HashMap<Units, Amount> = HashMap::new();
 
     for filtered in fts {
 
         // for a multi-entry transaction we only want to print the date/description
-        // for the first entry in the transaction, so track if it's the first
-        let mut first = true;
+        // for the first line
+        let mut is_first_entry = true;
 
         for entry in filtered.entries {
-            running_total += entry.cents;
+            update_running_totals(&mut running_totals, entry);
 
-            let report_line = if first {
-                first = false;
-                ReportLine {
-                    date       : Some( filtered.transaction.date),
-                    description: Some(&filtered.transaction.description),
-                    account    : &entry.account,
-                    entry_cents: entry.cents,
-                    running_total,
-                }
-            } else {
-                ReportLine {
-                    date       : None,
-                    description: None,
-                    account    : &entry.account,
-                    entry_cents: entry.cents,
-                    running_total,
-                }
-            };
-
+            let units = &entry.amount.units;
+            let running_total = running_totals.get(units).unwrap().clone();
+            let report_line = create_report_line(filtered.transaction,
+                                                 entry,
+                                                 running_total,
+                                                 is_first_entry);
+            
             report_lines.push(report_line);
+            is_first_entry = false;
         }
     }
 
     report_lines
 }
 
-// find any entries in this transaction for this account, returning a list of
-// references to them if there are any, or None if there's none
-fn filter_entries_for<'a>(transaction: &'a Transaction,
-                          account    : &'a Account) -> Option<FilteredTransaction<'a>>
+fn create_report_line<'a>(transaction   : &'a Transaction,
+                          entry         : &'a Entry,
+                          running_total : Amount,
+                          is_first_entry: bool) -> ReportLine<'a>
 {
-    let entries: Vec<&Entry> =
-        transaction.entries
-                   .iter()
-                   .filter(|entry| entry.account.as_str() == account)
-                   .collect();
-
-    if entries.is_empty() {
-        return None
+    ReportLine {
+        date         : if is_first_entry { Some(transaction.date) } else { None },
+        description  : if is_first_entry { Some(&transaction.description) } else { None },
+        account      : &entry.account,
+        amount       : entry.amount.to_string(),
+        running_total: running_total.to_string()
     }
-
-    Some(FilteredTransaction {
-        transaction,
-        entries
-    })
 }
+
+// Filters the transactions by the given account and returns a vector of FilteredTransaction.
+// For each transaction, it checks if there are any entries associated with the account.
+// If there are any, it creates a FilteredTransaction with a reference to the transaction
+// and the relevant entries. If not, it skips the transaction.
+fn filter_by_account<'a>(transactions: &'a [Transaction],
+                         account     : &'a Account) -> Vec<FilteredTransaction<'a>>
+{
+    transactions
+        .iter()
+        .filter_map(|transaction| {
+            let entries: Vec<&Entry> =
+                transaction.entries
+                           .iter()
+                           .filter(|entry| entry.account.as_str() == account)
+                           .collect();
+
+            if entries.is_empty() {
+                return None;
+            }
+
+            Some(FilteredTransaction {
+                transaction,
+                entries
+            })
+        })
+        .collect()
+}
+
+fn update_running_totals(totals: &mut HashMap<Units, Amount>,
+                         entry : &Entry)
+{
+    let units = &entry.amount.units;
+
+    if let Some(amount) = totals.get_mut(units) {
+        amount.add(&entry.amount);
+    } else {
+        totals.insert(units.clone(), entry.amount.clone());
+    }
+}
+
 
 // 2023/03/18 Groceries                      assets:savings                      $-41.06       $399.64
 // 2023/03/18 Crunchy Chicken Bowl           assets:savings                      $-16.10       $368.59
 
-impl Display for ReportLine<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl fmt::Display for ReportLine<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 
         let date = self.date
             .map(|date| format!("{}", date.format("%Y/%m/%d")))
@@ -108,13 +130,11 @@ impl Display for ReportLine<'_> {
         let empty = "".to_string();
         let description = self.description.unwrap_or(&empty);
 
-        let entry_amount  = format!("${:.2}", self.entry_cents as f64 / 100.0);
-        let running_total = format!("${:.2}", self.running_total as f64 / 100.0);
-
         write!(
             f,
             "{} {:<30} {:<30} {:>10} {:>10}",
-            date, description, self.account, entry_amount, running_total
+            date, description, self.account, self.amount, self.running_total
         )
     }
 }
+
