@@ -4,7 +4,8 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result};
 
-use crate::types::{Account, Amount, AmountType, Units};
+use crate::types::{Account, Units};
+use crate::types::amount::{Amount, AmountType};
 
 
 /* Transaction */
@@ -99,7 +100,7 @@ impl Display for Entry {
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
-    use crate::types::{Amount, AmountType};
+    use crate::types::amount::{Amount, AmountType};
 
     use super::{Entry, Transaction};
 

@@ -5,7 +5,7 @@ use std::str::FromStr;
 use regex::Regex;
 
 use crate::common::is_all_whitespace;
-use crate::types::{Account, Amount, Units};
+use crate::types::{Account, amount::Amount, Units};
 
 
 // the two types of input on the right side of an entry line
@@ -18,7 +18,7 @@ pub enum LineAmount {
 
 /* Line */
 
-// an account line from the journal text file, with an optional dollar amount
+// an account line from the journal text file, with an optional amount
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
     pub account: Account,
@@ -113,7 +113,7 @@ pub enum LineParseError {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Amount, AmountType};
+    use crate::types::amount::{Amount, AmountType};
     use crate::journal::types::{parse_account_and_amount, ParsedLine, LineParseError};
     use super::{LineAmount, FromStr, Line};
 

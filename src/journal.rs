@@ -3,13 +3,17 @@ pub mod types;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::fmt::{Display, Formatter, Result};
+use chrono::NaiveDate;
+
 use crate::common::is_all_whitespace;
 use crate::transaction::{Transaction, Entry};
-use crate::types::{Amount, Units};
+use crate::types::{amount::Amount, Units, monthyear::MonthYear};
 use crate::journal::types::{Line, LineAmount};
 
 
 /* Journal */
+
+// a journal is a list of transactions sorted by date
 
 #[derive(Debug, PartialEq)]
 pub struct Journal {
@@ -87,6 +91,9 @@ impl Journal {
                              &mut blank,
                              &mut journal);
 
+        // sort by transaction date
+        journal.sort_by_key(|t| t.date);
+
         Ok(Journal { transactions: journal })
     }
 }
@@ -111,8 +118,8 @@ fn balance_transaction(blank      : &mut Option<Line>,
     let totals = transaction.totals();
 
     // get only the non-zero amounts, these are the unbalanced units and there
-    // can be no more than one of them
-    let mut nonzero: HashMap<Units, Amount> =
+    // can be no more than one of them if the transaction is to balance
+    let nonzero: HashMap<Units, Amount> =
         totals.into_iter()
               .filter(|(_, a)| !a.is_zero())
               .collect();
@@ -121,9 +128,8 @@ fn balance_transaction(blank      : &mut Option<Line>,
         if nonzero.is_empty() { panic!("Blank transaction entry with no unbalanced commodity"); }
         if nonzero.len() > 1  { panic!("Blank transaction entry with more than one unbalanced commodity"); }
 
-        // get the only key that can be there
-        let units = nonzero.keys().next().unwrap().clone();
-        let amount = nonzero.remove(&units).unwrap();
+        // get the only amount that can be there
+        let (_, amount) = nonzero.into_iter().next().unwrap();
 
         // create a new entry with the amount that balances the overall transaction to zero
         transaction.entries.push(Entry {
@@ -136,7 +142,6 @@ fn balance_transaction(blank      : &mut Option<Line>,
         panic!("Unbalanced transaction: {}", transaction);
     }
 }
-
 
 // process an entry line and add it to the transaction
 fn process_line(line       : Line,
@@ -156,12 +161,11 @@ fn process_line(line       : Line,
             *blank = Some(line);
         },
         LineAmount::Amount(amount) => {
-            let entry = Entry {
+            // borrow a mutable reference to the transaction and add an entry
+            transaction.as_mut().unwrap().entries.push(Entry {
                 account: line.account,
                 amount
-            };
-            // borrow a mutable reference to the transaction
-            transaction.as_mut().unwrap().entries.push(entry);
+            });
         }
     }
 }
@@ -181,6 +185,36 @@ fn split_off_comment(line: &str) -> (String, Option<String>) {
 }
 
 
+pub struct JournalSummary {
+    pub first_month: MonthYear,
+    pub final_month: MonthYear,
+}
+
+impl JournalSummary {
+
+    pub fn from(journal: &Journal) -> Self {
+        let first_transaction_date: NaiveDate =
+            journal.transactions
+                   .iter()
+                   .map(|t| t.date)
+                   .min()
+                   .unwrap_or_default();
+
+        let last_transaction_date: NaiveDate =
+            journal.transactions
+                   .iter()
+                   .map(|t| t.date)
+                   .max()
+                   .unwrap_or_default();
+
+        JournalSummary {
+            first_month: MonthYear::from_naivedate(first_transaction_date),
+            final_month: MonthYear::from_naivedate(last_transaction_date)
+        }
+    }
+}
+
+
 /* Tests */
 
 #[cfg(test)]
@@ -189,7 +223,7 @@ mod tests {
     use crate::journal::{ParseJournalError, finalize_transaction};
     use crate::journal::types::LineAmount;
     use crate::transaction::Entry;
-    use crate::types::{AmountType, Amount}; // TODO
+    use crate::types::amount::{AmountType, Amount}; // TODO
 
     // Journal::from_lines()
 

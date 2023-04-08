@@ -53,11 +53,12 @@ Register report for account assets:savings:
 ## Roadmap
 
 - [x] Read in ledger files with dollar/cents amounts
-    - [ ] General units, not just dollars
+    - [x] General units, not just dollars
 - [x] Reports
     - [x] **register** - One line per post to a single specified account, with a cummulative total
-        - [ ] Any number of specified accounts
-    - [ ] **balance** - Show balance changes to an account(s) grouped by time period (weekly, monthly)
+    - [x] **balance** - Show balance changes to an account(s) grouped by month
+    - [ ] Time periods: daily, weekly, yearly 
+    - [ ] Any number of specified accounts
 - [ ] Stream the file instead of reading it into a big string
 - [ ] Tiny Docker image
 - [ ] Slick UI for adding new transactions with the minimal number of keystrokes. Full color terminal app based on ncurses
