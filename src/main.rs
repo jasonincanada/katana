@@ -24,12 +24,12 @@ fn main() {
     match report {
         "balance" => {
             let account = args.value_of("account")
-                                 .expect("Need an account name for the balance report");
+                              .expect("Need an account name for the balance report");
             balance(&journal, account);
         },
         "register" => {
             let account = args.value_of("account")
-                                 .expect("Need an account name for the register report");
+                              .expect("Need an account name for the register report");
             register(&journal, account);
         },
         _ => panic!("Unknown report type"),
